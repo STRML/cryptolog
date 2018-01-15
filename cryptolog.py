@@ -5,7 +5,7 @@ from os import urandom
 from time import localtime
 from types import NoneType
 from syslog import syslog, LOG_CRIT
-from base64 import b64encode
+from base64 import urlsafe_b64encode
 from hmac import HMAC
 from argparse import ArgumentParser
 from subprocess import Popen, PIPE
@@ -34,7 +34,7 @@ def salt():
 
 def hash_entity(entity, hashed_size, salt_param=None):
     salt_var = salt_param or salt()
-    return b64encode(HMAC(salt_var, entity).digest())[:hashed_size]
+    return urlsafe_b64encode(HMAC(salt_var, entity).digest())[:hashed_size]
 
 class LogParseError(Exception):
   pass
@@ -46,7 +46,7 @@ class UninitializedCryptoFilter(Exception):
 
 class CryptoFilter(object):
   """Class to control cryptographic logging."""
-  
+
   def __init__(self, regex=None, field_list=None, delete_list=None):
     """
     Args:
@@ -69,17 +69,17 @@ class CryptoFilter(object):
   def SetFields(self, field_list, delete_list):
     self._field_list = field_list
     self._delete_list = delete_list
-  
+
   def IsInitialized(self):
     return self._regex and self._field_list
-  
+
   def Reset(self):
     self._regex = None
     self._named = None
     self._field_list = None
 
   def EncryptSingleLogEntry(self, log_entry):
-    """From self.regex, picks out relevant fields from 
+    """From self.regex, picks out relevant fields from
     self._field_list and replaces them with crypt hashes.
 
     Args:
@@ -92,8 +92,9 @@ class CryptoFilter(object):
       raise UninitializedCryptoFilter("Not initialized")
     results = self._regex.search(log_entry)
     if not results:
-      raise LogParseError("Log format does not match regex.")
-    print self._regex.groupindex.items()
+      return log_entry + '\n'
+      # raise LogParseError("Log format does not match regex.")
+    # print self._regex.groupindex.items()
 
     # create a list of matches based on named gropus, preserving order
     results_dict = results.groupdict()
@@ -121,7 +122,7 @@ class CryptoFilter(object):
       res = results.group(field)
       split_log[split_log.index(res)] = '-'
     split_log = filter(lambda x: type(x) != NoneType, split_log)
-    return '%s\n' % (' '.join(split_log))
+    return '%s\n' % (''.join(split_log))
 
   def SetSaltfile(self, salt_file):
     self._salt = open(salt_file, 'r').read()
@@ -137,10 +138,10 @@ if __name__ == "__main__":
       dest='regex',
       help='file providing regex for log format')
   parser.add_argument('-w',
-      dest='write', 
+      dest='write',
       help='filename to write logs to')
   parser.add_argument('-c',
-      dest='command', 
+      dest='command',
       help='pipe logs to this external program')
   parser.add_argument('-e',
       dest='entities',
@@ -162,10 +163,10 @@ if __name__ == "__main__":
 
   entities = args.entities.split(',')
   ipv6_exp = '([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])'
-  ipv4_exp = '\d\d?\d?\.\d\d?\d?\.\d\d?\d?\.\d\d?\d?'
+  ipv4_exp = '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'
   if args.regex:
     with open(args.regex, 'r') as regex_file:
-      expression = regex_file.read().replace('*IPV6*', ipv6_exp).replace('*IPV4*', ipv4_exp)
+      expression = regex_file.read().strip().replace('*IPV6*', ipv6_exp).replace('*IPV4*', ipv4_exp)
       regex = re.compile(expression)
   else:
     regex = re.compile(r'(?P<IP>'+ipv4_exp+'|'+ipv6_exp+')( )(?P<OTHER>.*)')
@@ -183,7 +184,7 @@ if __name__ == "__main__":
 
   log = stdin.readline()
   while(log):
-    crypted_log = cryptor.EncryptSingleLogEntry(log)
+    crypted_log = cryptor.EncryptSingleLogEntry(log.replace('\n', ''))
     if(log_file != None):
       log_file.write(crypted_log)
       log_file.flush()
@@ -200,5 +201,3 @@ if __name__ == "__main__":
   if(p != None):
     p.stdin.close()
     p.wait()
-
-
